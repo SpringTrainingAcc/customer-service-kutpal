@@ -1,14 +1,22 @@
+def args = [:]
+args.CLUSTER_NAME = ""
+args.PROJECT_NAME = "cloudnative"
+args.SERVICE_NAME = "customer-service-kutpal"
+args.SERVICE_VERSION = "0.0.1-SNAPSHOT"
+
+
 node () {
+        properties([disableConcurrentBuilds()])
         stage ('Code Checkout')
         {
-            checkout changelog: false, poll: false, scm: [$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'https://github.com/ritubgp/customer-openshift-service']]]
+            checkout scm
         }
         stage ('Build')
         {
             echo "Checkout completed. Starting the build"
             withMaven(maven: 'maven-latest') {
                 sh 'mvn clean install package'
-                stash name:"jar", includes:"target/customer-service-*.jar"
+                //stash name:"jar", includes:"target/customer-service-*.jar"
             }
         }
         stage('unit tests') {
@@ -20,16 +28,16 @@ node () {
             if (
                 expression {
                 openshift.withCluster() {
-                  openshift.withProject() {
-                      return !openshift.selector("bc", "customer-service-test").exists()
+                  openshift.withProject(args.PROJECT_NAME) {
+                      return !openshift.selector("bc", "${args.SERVICE_NAME}").exists()
                       }
                      }
                     }
                 )
                 script {
                     openshift.withCluster() {
-                        openshift.withProject() {
-                            openshift.newApp "registry.access.redhat.com/redhat-openjdk-18/openjdk18-openshift~/var/lib/jenkins/jobs/customer-service-test/branches/master/workspace", "--name=customer-service-test"
+                        openshift.withProject(args.PROJECT_NAME) {
+                            openshift.newApp "registry.access.redhat.com/redhat-openjdk-18/openjdk18-openshift~./", "--name=${args.SERVICE_NAME}"
                         }
                     }
                 }
@@ -37,9 +45,9 @@ node () {
         stage('Build Image') {
               script {
                 openshift.withCluster() {
-                  openshift.withProject() {
-                      def build = openshift.selector("bc", "customer-service-test");
-                      def startedBuild = build.startBuild("--from-file=\"./target/customer-service-0.0.1-SNAPSHOT.jar\"");
+                  openshift.withProject(args.PROJECT_NAME) {
+                      def build = openshift.selector("bc", "${args.SERVICE_NAME}");
+                          def startedBuild = build.startBuild("--from-file=\"./target/${args.SERVICE_NAME}-${args.SERVICE_VERSION}.jar\"");
                       startedBuild.logs('-f');
                       echo "Customer service build status: ${startedBuild.object().status}";
                   }
@@ -49,8 +57,8 @@ node () {
         stage('Tag Image') {
             script {
                 openshift.withCluster() {
-                    openshift.withProject() {
-                        openshift.tag("customer-service"+":latest", "customer-service-test"+":dev")
+                    openshift.withProject(args.PROJECT_NAME) {
+                        openshift.tag("${args.SERVICE_NAME}"+":latest", "${args.SERVICE_NAME}"+":dev")
                     }
                 }
             }
@@ -58,14 +66,14 @@ node () {
         stage('Deploy STAGE') {
               script {
                 openshift.withCluster() {
-                  openshift.withProject() {
-                    if (openshift.selector('dc', 'customer-service-test').exists()) {
-                      openshift.selector('dc', 'customer-service-test').delete()
-                      openshift.selector('svc', 'customer-service-test').delete()
-                      //openshift.selector('route', 'customer-service-test').delete()
+                  openshift.withProject(args.PROJECT_NAME) {
+                    if (openshift.selector('dc', '${args.SERVICE_NAME}').exists()) {
+                      openshift.selector('dc', '${args.SERVICE_NAME}').delete()
+                      openshift.selector('svc', '${args.SERVICE_NAME}').delete()
+                      //openshift.selector('route', '${args.SERVICE_NAME}').delete()
                     }
 
-                    openshift.newApp("customer-service-test").narrow("svc").expose()
+                    openshift.newApp("${args.SERVICE_NAME}").narrow("svc").expose()
                     }
               }
             }
